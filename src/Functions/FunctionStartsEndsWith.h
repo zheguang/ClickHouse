@@ -68,6 +68,7 @@ public:
     static constexpr auto name = Name::name;
     static constexpr auto is_utf8 = Name::is_utf8;
     static constexpr auto is_case_insensitive = Name::is_case_insensitive;
+    static constexpr auto are_starts_with_functions = std::is_same_v<Name, NameStartsWith> || std::is_same_v<Name, NameStartsWithCaseInsensitive>;
 
     String getName() const override
     {
@@ -233,6 +234,27 @@ private:
     {
         size_t row_num = 0;
 
+        /// For the constant needle, factor out common operation in case-insensitive comparison
+        /// (1) Determine if it contains letters only
+        /// (2) Turn it into lower cases
+        bool letter_only = false;
+        bool lowercase_only = false;
+        if constexpr (is_case_insensitive)
+        {
+            if constexpr (std::is_same_v<NeedleSource, ConstSource<StringSource>> || std::is_same_v<NeedleSource, ConstSource<FixedStringSource>>)
+            {
+                letter_only = true;
+                lowercase_only = true;
+                auto needle = needle_source.getWhole();
+                for (size_t i = 0; i < needle.size; ++i)
+                {
+                    char c = needle.data[i];
+                    letter_only = letter_only && std::isalpha(c);
+                    if (std::isupper(c)) needle.dat[i] = std::tolower(c); /// To lowercase
+                }
+            }
+        }
+
         while (!haystack_source.isEnd())
         {
             auto haystack = haystack_source.getWhole();
@@ -242,10 +264,11 @@ private:
                 res_data[row_num] = false;
             else
             {
-                if constexpr (std::is_same_v<Name, NameStartsWith> || std::is_same_v<Name, NameStartsWithCaseInsensitive>) /// startsWith(CaseInsensitive)
-                    res_data[row_num] = compare<is_case_insensitive>(StringRef(haystack.data, needle.size), StringRef(needle.data, needle.size));
+                if constexpr (are_starts_with_functions) /// startsWith(CaseInsensitive)
+                    res_data[row_num] = compare<is_case_insensitive, letter_only, lowercase_only>(
+                        StringRef(haystack.data, needle.size), StringRef(needle.data, needle.size));
                 else if constexpr (std::is_same_v<Name, NameEndsWith>) /// endsWith
-                    res_data[row_num] = StringRef(haystack.data + haystack.size - needle.size, needle.size) == StringRef(needle.data, needle.size); // TODO
+                    res_data[row_num] = StringRef(haystack.data + haystack.size - needle.size, needle.size) == StringRef(needle.data, needle.size);
                 else /// startsWithUTF8 or endsWithUTF8
                 {
                     auto length = UTF8::countCodePoints(needle.data, needle.size);
